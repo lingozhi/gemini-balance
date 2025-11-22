@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     OSS_BUCKET_NAME: str = ""
     OSS_REGION: str = ""
 
+    # Cloudflare R2配置
+    R2_ACCOUNT_ID: str = ""
+    R2_ACCESS_KEY_ID: str = ""
+    R2_SECRET_ACCESS_KEY: str = ""
+    R2_BUCKET_NAME: str = ""
+    R2_PUBLIC_DOMAIN: str = ""  # 可选：自定义域名，如 https://img.yourdomain.com
+
     # 流式输出优化器配置
     STREAM_OPTIMIZER_ENABLED: bool = False
     STREAM_MIN_DELAY: float = DEFAULT_STREAM_MIN_DELAY

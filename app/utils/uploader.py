@@ -610,6 +610,193 @@ class CloudFlareImgBedUploader(ImageUploader):
                 original_error=e
             )
     
+class CloudflareR2Uploader(ImageUploader):
+    """Cloudflare R2对象存储上传器（S3兼容）"""
+
+    def __init__(self, account_id: str, access_key_id: str, secret_access_key: str,
+                 bucket_name: str, public_domain: str = ""):
+        """
+        初始化Cloudflare R2上传器
+
+        Args:
+            account_id: Cloudflare账户ID
+            access_key_id: R2 Access Key ID
+            secret_access_key: R2 Secret Access Key
+            bucket_name: R2存储桶名称
+            public_domain: 公共访问域名（可选），例如自定义域名
+        """
+        self.account_id = account_id
+        self.access_key_id = access_key_id
+        self.secret_access_key = secret_access_key
+        self.bucket_name = bucket_name
+        self.public_domain = public_domain
+        self.logger = get_image_create_logger()
+
+        # R2的S3兼容端点
+        self.endpoint = f"https://{account_id}.r2.cloudflarestorage.com"
+        self.logger.info(f"Initialized CloudflareR2Uploader for bucket: {bucket_name}")
+
+    def _sign_request(self, method: str, path: str, headers: dict, content: bytes = b'') -> dict:
+        """
+        使用AWS Signature V4为R2请求生成签名
+
+        Args:
+            method: HTTP方法
+            path: 请求路径
+            headers: 请求头
+            content: 请求内容
+
+        Returns:
+            包含签名的请求头
+        """
+        from datetime import datetime
+        import hashlib
+        import hmac
+
+        # 获取当前时间
+        now = datetime.utcnow()
+        amz_date = now.strftime('%Y%m%dT%H%M%SZ')
+        date_stamp = now.strftime('%Y%m%d')
+
+        # 设置必要的头部
+        headers['Host'] = f"{self.account_id}.r2.cloudflarestorage.com"
+        headers['x-amz-date'] = amz_date
+        headers['x-amz-content-sha256'] = hashlib.sha256(content).hexdigest()
+
+        # 创建规范请求
+        canonical_uri = f"/{self.bucket_name}{path}"
+        canonical_querystring = ''
+
+        # 规范化头部
+        canonical_headers = ''
+        signed_headers_list = []
+        for key in sorted(headers.keys()):
+            canonical_headers += f"{key.lower()}:{headers[key]}\n"
+            signed_headers_list.append(key.lower())
+        signed_headers = ';'.join(signed_headers_list)
+
+        # 创建规范请求
+        canonical_request = f"{method}\n{canonical_uri}\n{canonical_querystring}\n{canonical_headers}\n{signed_headers}\n{headers['x-amz-content-sha256']}"
+
+        # 创建待签名字符串
+        algorithm = 'AWS4-HMAC-SHA256'
+        credential_scope = f"{date_stamp}/auto/s3/aws4_request"
+        string_to_sign = f"{algorithm}\n{amz_date}\n{credential_scope}\n{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
+
+        # 计算签名
+        def sign(key, msg):
+            return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
+        k_date = sign(('AWS4' + self.secret_access_key).encode('utf-8'), date_stamp)
+        k_region = sign(k_date, 'auto')
+        k_service = sign(k_region, 's3')
+        k_signing = sign(k_service, 'aws4_request')
+        signature = hmac.new(k_signing, string_to_sign.encode('utf-8'), hashlib.sha256).hexdigest()
+
+        # 添加授权头
+        authorization_header = f"{algorithm} Credential={self.access_key_id}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+        headers['Authorization'] = authorization_header
+
+        return headers
+
+    def upload(self, file: bytes, filename: str) -> UploadResponse:
+        """
+        上传图片到Cloudflare R2
+
+        Args:
+            file: 图片文件二进制数据
+            filename: 文件名
+
+        Returns:
+            UploadResponse: 上传响应对象
+
+        Raises:
+            UploadError: 上传失败时抛出异常
+        """
+        self.logger.info(f"Starting R2 upload for file: {filename}, size: {len(file)} bytes")
+
+        try:
+            # 构建对象路径
+            object_key = f"/{filename}"
+
+            # 准备请求头
+            headers = {
+                'Content-Type': 'image/png',
+                'x-amz-acl': 'public-read'
+            }
+
+            # 签名请求
+            signed_headers = self._sign_request('PUT', object_key, headers, file)
+
+            # 构建完整URL
+            upload_url = f"{self.endpoint}/{self.bucket_name}{object_key}"
+            self.logger.debug(f"R2 upload URL: {upload_url}")
+
+            # 发送请求
+            response = requests.put(
+                upload_url,
+                data=file,
+                headers=signed_headers
+            )
+
+            # 检查响应状态
+            if response.status_code != 200:
+                error_msg = f"R2 upload failed with status {response.status_code}, response: {response.text}"
+                self.logger.error(f"R2 upload failed for {filename}: {error_msg}")
+                raise UploadError(
+                    message=f"R2 upload failed with status {response.status_code}",
+                    error_type=UploadErrorType.SERVER_ERROR,
+                    status_code=response.status_code,
+                    details={'response': response.text}
+                )
+
+            # 构建访问URL
+            if self.public_domain:
+                # 使用自定义域名
+                access_url = f"{self.public_domain.rstrip('/')}{object_key}"
+            else:
+                # 使用R2的公共URL（需要配置公共访问）
+                access_url = f"https://pub-{self.account_id}.r2.dev{object_key}"
+
+            # 构建图片元数据
+            image_metadata = ImageMetadata(
+                width=0,
+                height=0,
+                filename=filename,
+                size=len(file),
+                url=access_url,
+                delete_url=None
+            )
+
+            self.logger.info(f"R2 upload successful for {filename}, URL: {access_url}")
+
+            return UploadResponse(
+                success=True,
+                code="success",
+                message="Upload to Cloudflare R2 success",
+                data=image_metadata
+            )
+
+        except requests.RequestException as e:
+            error_msg = f"R2 upload request failed: {str(e)}"
+            self.logger.error(f"R2 upload request failed for {filename}: {error_msg}")
+            raise UploadError(
+                message=error_msg,
+                error_type=UploadErrorType.NETWORK_ERROR,
+                original_error=e
+            )
+        except UploadError:
+            raise
+        except Exception as e:
+            error_msg = f"R2 upload failed: {str(e)}"
+            self.logger.error(f"R2 upload unexpected error for {filename}: {error_msg}")
+            raise UploadError(
+                message=error_msg,
+                error_type=UploadErrorType.UNKNOWN,
+                original_error=e
+            )
+
+
 class ImageUploaderFactory:
     @staticmethod
     def create(provider: str, **credentials) -> ImageUploader:
@@ -617,7 +804,7 @@ class ImageUploaderFactory:
             return SmMsUploader(credentials["api_key"])
         elif provider == "qiniu":
             return QiniuUploader(
-                credentials["access_key"], 
+                credentials["access_key"],
                 credentials["secret_key"]
             )
         elif provider == "picgo":
@@ -637,5 +824,13 @@ class ImageUploaderFactory:
                 credentials["endpoint"],
                 credentials["region"],
                 credentials.get("use_internal", False)
+            )
+        elif provider == "cloudflare_r2":
+            return CloudflareR2Uploader(
+                credentials["account_id"],
+                credentials["access_key_id"],
+                credentials["secret_access_key"],
+                credentials["bucket_name"],
+                credentials.get("public_domain", "")
             )
         raise ValueError(f"Unknown provider: {provider}")
