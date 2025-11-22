@@ -29,37 +29,27 @@ def create_tables():
 def import_env_to_settings():
     """
     将.env文件中的配置项导入到t_settings表中
+
+    注意：此功能已禁用。
+    t_settings 表主要用于运行时动态配置，不应该在启动时自动导入所有环境变量。
+    应用配置应该从环境变量中读取（.env 文件或 Railway Variables）。
+
+    如果需要使用 t_settings 表，请通过管理界面或 API 手动配置。
     """
     try:
-        # 获取.env文件中的所有配置项
-        env_values = dotenv_values(".env")
-        
-        # 获取检查器
+        # 检查 t_settings 表是否存在
         inspector = inspect(engine)
-        
-         # 检查t_settings表是否存在
+
         if "t_settings" in inspector.get_table_names():
-            # 使用Session进行数据库操作
-            with Session(engine) as session:
-                # 获取所有现有的配置项
-                current_settings = {setting.key: setting for setting in session.query(Settings).all()}
-                
-                # 遍历所有配置项
-                for key, value in env_values.items():
-                    # 检查配置项是否已存在
-                    if key not in current_settings:
-                        # 插入配置项
-                        new_setting = Settings(key=key, value=value)
-                        session.add(new_setting)
-                        logger.info(f"Inserted setting: {key}")
-                
-                # 提交事务
-                session.commit()
-                
-        logger.info("Environment variables imported to settings table successfully")
+            logger.info("t_settings table exists (auto-import disabled)")
+        else:
+            logger.warning("t_settings table does not exist")
+
+        logger.info("Skipped auto-import of environment variables to settings table")
     except Exception as e:
-        logger.error(f"Failed to import environment variables to settings table: {str(e)}")
-        raise
+        logger.error(f"Failed to check settings table: {str(e)}")
+        # 不抛出异常，允许应用继续启动
+        pass
 
 
 def initialize_database():
