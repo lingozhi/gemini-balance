@@ -12,20 +12,27 @@ logger = get_key_manager_logger()
 
 class KeyManager:
     def __init__(self, api_keys: list, vertex_api_keys: list):
-        self.api_keys = api_keys
-        self.vertex_api_keys = vertex_api_keys
-        self.key_cycle = cycle(api_keys)
-        self.vertex_key_cycle = cycle(vertex_api_keys)
+        # 确保至少有一个空字符串，避免 cycle([]) 导致的 StopIteration
+        self.api_keys = api_keys if api_keys else [""]
+        self.vertex_api_keys = vertex_api_keys if vertex_api_keys else [""]
+        self.key_cycle = cycle(self.api_keys)
+        self.vertex_key_cycle = cycle(self.vertex_api_keys)
         self.key_cycle_lock = asyncio.Lock()
         self.vertex_key_cycle_lock = asyncio.Lock()
         self.failure_count_lock = asyncio.Lock()
         self.vertex_failure_count_lock = asyncio.Lock()
-        self.key_failure_counts: Dict[str, int] = {key: 0 for key in api_keys}
+        self.key_failure_counts: Dict[str, int] = {key: 0 for key in self.api_keys}
         self.vertex_key_failure_counts: Dict[str, int] = {
-            key: 0 for key in vertex_api_keys
+            key: 0 for key in self.vertex_api_keys
         }
         self.MAX_FAILURES = settings.MAX_FAILURES
         self.paid_key = settings.PAID_KEY
+
+        # 记录警告如果密钥列表为空
+        if not api_keys:
+            logger.warning("API_KEYS is empty! Please configure valid Gemini API keys in your .env file.")
+        if not vertex_api_keys:
+            logger.warning("VERTEX_API_KEYS is empty! Vertex AI features will not be available.")
 
     async def get_paid_key(self) -> str:
         return self.paid_key
