@@ -228,4 +228,13 @@ def is_image_upload_configured(settings: Settings) -> bool:
                 getattr(settings, "CLOUDFLARE_IMGBED_AUTH_CODE", ""),
             ]
         )
+    if provider == "cloudflare_r2":
+        return all(
+            [
+                getattr(settings, "R2_ACCOUNT_ID", ""),
+                getattr(settings, "R2_ACCESS_KEY_ID", ""),
+                getattr(settings, "R2_SECRET_ACCESS_KEY", ""),
+                getattr(settings, "R2_BUCKET_NAME", "")
+            ]
+        )
     return False

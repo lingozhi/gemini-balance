@@ -314,6 +314,15 @@ def _extract_image_data(part: dict) -> str:
             region=settings.OSS_REGION,
             use_internal=False
         )
+    elif settings.UPLOAD_PROVIDER == "cloudflare_r2":
+        image_uploader = ImageUploaderFactory.create(
+            provider=settings.UPLOAD_PROVIDER,
+            account_id=settings.R2_ACCOUNT_ID,
+            access_key_id=settings.R2_ACCESS_KEY_ID,
+            secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+            bucket_name=settings.R2_BUCKET_NAME,
+            public_domain=settings.R2_PUBLIC_DOMAIN
+        )
     current_date = time.strftime("%Y/%m/%d")
     filename = f"{current_date}/{uuid.uuid4().hex[:8]}.png"
     base64_data = part["inlineData"]["data"]
